@@ -4,8 +4,10 @@ import com.ctre.CANTalon;
 import com.ctre.CANTalon.FeedbackDevice;
 import com.ctre.CANTalon.TalonControlMode;
 
+import Helpers.InterpolatingDouble;
 import Utilities.Constants;
 import Utilities.Ports;
+import Utilities.Util;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard; //added
 
 public class Turret {
@@ -14,6 +16,7 @@ public class Turret {
 	private double lockedAngle = 0.0;
 	private double lockedTurretAngle = 0.0;
 	private int onTargetCheck = 0;
+	private double angleOffset = 0;
 //	private int absolutePosition;
 	public Turret(){
 		motor = new CANTalon(Ports.TURRET);
@@ -28,13 +31,13 @@ public class Turret {
     	motor.changeControlMode(TalonControlMode.Position);
     	motor.set(0);
     	motor.setPID(Constants.TURRET_DEFAULT_P, 0.0, Constants.TURRET_DEFAULT_D, 0.0, 0, 0.0, 0);	//practice bot pid tuning
-    	motor.setPID(Constants.TURRET_SMALL_P, 0.00, Constants.TURRET_SMALL_P, 0.0, 0, 0.0, 1);
+    	motor.setPID(5.0, 0.00, Constants.TURRET_SMALL_D, 0.0, 0, 0.0, 1);
     	motor.setProfile(0);
 		motor.enableBrakeMode(true);
 		motor.setNominalClosedLoopVoltage(12);
 	}
 	public enum State{
-		Off, VisionTracking, CalculatedTracking, Manual, GyroComp
+		Off, VisionTracking, CalculatedTracking, Manual, GyroComp, TeleopGyroComp
 	}
 	public State currentState = State.Manual;
 	public static Turret getInstance(){
@@ -49,16 +52,15 @@ public class Turret {
 		return currentState;
 	}
 	
-	public void lockAngle(double newAngle){
+	public void lockAngle(double newAngle,double turretAngle){
 		lockedAngle = newAngle;
-		lockedTurretAngle = getAngle();
+		lockedTurretAngle = turretAngle;
 	}
 	
 	public void manualControl(double input){
-		double newAngle = (motor.getSetpoint() * Constants.TURRET_CLICKS_TO_ANGLE) + (input * 3.5);
+		double newAngle = (motor.getSetpoint() * Constants.TURRET_CLICKS_TO_ANGLE) + (input * 2);
 		setAngle(newAngle);		
 		onTargetCheck = Constants.TURRET_ONTARGET_THRESH;
-//		motor.set(-input *0.5);
 	}
 	public void setAngle(double angle){
 		if(angle > Constants.TURRET_MAX_ANGLE)
@@ -73,21 +75,25 @@ public class Turret {
 		setAngle(newAngle);
 	}
 	public double getAngle(){
-		return motor.getPosition() * Constants.TURRET_CLICKS_TO_ANGLE;
+		return (motor.getPosition() * Constants.TURRET_CLICKS_TO_ANGLE);
 	}
 	public double getGoal(){
-		return motor.getSetpoint() * Constants.TURRET_CLICKS_TO_ANGLE;
+		return (motor.getSetpoint() * Constants.TURRET_CLICKS_TO_ANGLE);
 	}
 	public void update(double heading){
-		if(Math.abs(getError()) < Constants.TURRET_SMALL_PID_THRESH){
-			motor.setProfile(0);
+		if(Math.abs(getError()) < Constants.TURRET_SMALL_PID_THRESH && currentState != State.VisionTracking){
+			motor.setProfile(1);
 		}else{
 			motor.setProfile(0);
 		}
 		switch(currentState){
 		case GyroComp:
 			setAngle(lockedTurretAngle + (lockedAngle - heading));
+			//System.out.println("Turret Goal: " + Double.toString(getGoal()));
 			break;
+		case TeleopGyroComp:
+			setAngle(lockedTurretAngle + (lockedAngle - Util.BoundPigeonAngle(heading)));
+			//System.out.println("Turret Goal: " + Double.toString(getGoal()));
 		default:
 			break;
 		}
@@ -104,17 +110,32 @@ public class Turret {
 //		Util.sdVerboseClosedLoop("Turret", "Angle", getAngle(), getGoal(),motor.getOutputCurrent()); // *** NEW! ***
 		SmartDashboard.putNumber("TURRET_CURR", motor.getOutputCurrent());
 		SmartDashboard.putNumber("TURRET_VOLTAGE", motor.getOutputVoltage());
-		
 	}
 	public double getError(){
-		return getGoal() - getAngle();
+		return (getGoal() - getAngle());
 	}
 	public boolean onTarget(){
-		if(Math.abs(getError()) < 1.0){
+		if(Math.abs(getError()) < 2.5){
 			onTargetCheck--;
 		}else{
 			onTargetCheck = Constants.TURRET_ONTARGET_THRESH;
 		}
 		return onTargetCheck <= 0;
 	}
+	public void resetAngle(double a){
+		motor.setEncPosition((int)a*Constants.TURRET_TICKS_PER_90);
+		motor.set(a/Constants.TURRET_CLICKS_TO_ANGLE);
+	}
+	public void stop(){
+		motor.setSetpoint(motor.getPosition());
+		setAngle(getAngle());
+	}
+	public double getTurretAngleForRange(double range) {
+        InterpolatingDouble result = Constants.kTurretDistanceMap.getInterpolated(new InterpolatingDouble(range));
+        if (result != null) {
+            return result.value;
+        } else {
+            return 0.0;
+        }
+    }
 }
